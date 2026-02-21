@@ -30,12 +30,21 @@ importScripts('../secrets.js');
       });
 
       // URL fragment에서 access_token 추출
-      const hash = new URL(responseUrl).hash.substring(1);
+      const url = new URL(responseUrl);
+      const hash = url.hash.substring(1);
       const params = new URLSearchParams(hash);
+
+      // Spotify 에러 응답 체크 (hash 또는 query param)
+      const error = params.get('error') || url.searchParams.get('error');
+      if (error) {
+        throw new Error(`Spotify rejected: ${error}`);
+      }
+
       const token = params.get('access_token');
       const expiresIn = parseInt(params.get('expires_in') || '3600', 10);
 
       if (!token) {
+        console.error('Response URL:', responseUrl);
         throw new Error('No access token in response');
       }
 

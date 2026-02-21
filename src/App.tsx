@@ -334,7 +334,12 @@ export function App() {
       if (!tab?.id || !tab.url?.includes("youtube.com/watch")) return
 
       chrome.tabs.sendMessage(tab.id, { action: "extractSongs" }, (res) => {
-        if (chrome.runtime.lastError || !res?.songs?.length) return
+        if (chrome.runtime.lastError) {
+          console.warn("[WaterMelon]", chrome.runtime.lastError.message)
+          return
+        }
+        if (!res?.songs?.length) return
+
         const extracted: Song[] = res.songs.map((s: { title: string; artist: string }) => ({
           title: s.title,
           artist: s.artist,
@@ -350,7 +355,7 @@ export function App() {
         }
       })
     }
-    init()
+    init().catch((err) => console.error("[WaterMelon] Init error:", err))
   }, [])
 
   const handleLogin = useCallback(async () => {
@@ -406,7 +411,7 @@ export function App() {
   }, [token, songs, videoTitle])
 
   return (
-    <div className="relative flex h-[580px] w-[380px] flex-col overflow-hidden bg-wm-dark">
+    <div className="relative flex h-[580px] w-[380px] flex-col overflow-hidden rounded-2xl border border-wm-border bg-wm-dark shadow-2xl shadow-black/60">
       {/* Subtle gradient overlay */}
       <div className="pointer-events-none absolute inset-0 bg-gradient-to-b from-wm-red/[0.04] via-transparent to-wm-green/[0.04]" />
 

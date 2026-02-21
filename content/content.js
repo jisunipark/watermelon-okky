@@ -267,8 +267,13 @@
   // 메시지 리스너
   chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     if (msg.action === 'extractSongs') {
-      const result = extractSongs();
-      sendResponse(result);
+      try {
+        const result = extractSongs();
+        sendResponse(result);
+      } catch (err) {
+        console.error('[WaterMelon] Extraction error:', err);
+        sendResponse({ songs: [], videoTitle: '', error: err.message });
+      }
     }
     return true;
   });
