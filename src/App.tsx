@@ -33,7 +33,20 @@ const transition = {
   transition: { duration: 0.3 },
 }
 
-// --- Chrome helpers ---
+// --- Background message helpers ---
+
+function sendBg(msg: Record<string, unknown>): Promise<any> {
+  return new Promise((resolve) => {
+    chrome.runtime.sendMessage(msg, (res) => {
+      if (chrome.runtime.lastError) {
+        console.error("[WaterMelon] sendBg error:", chrome.runtime.lastError.message)
+        resolve(null)
+      } else {
+        resolve(res)
+      }
+    })
+  })
+}
 
 async function extractSongsFromTab(
   tabId: number
@@ -41,7 +54,7 @@ async function extractSongsFromTab(
   return new Promise((resolve) => {
     chrome.tabs.sendMessage(tabId, { action: "extractSongs" }, (res) => {
       if (chrome.runtime.lastError) {
-        resolve(null) // content script not injected
+        resolve(null)
       } else {
         resolve(res)
       }
@@ -54,98 +67,6 @@ async function injectContentScript(tabId: number): Promise<void> {
     target: { tabId },
     files: ["content/content.js"],
   })
-}
-
-// --- Spotify API helpers ---
-
-async function getToken(): Promise<string | null> {
-  return new Promise((resolve) => {
-    chrome.runtime.sendMessage({ action: "getToken" }, (res) => {
-      resolve(res?.token ?? null)
-    })
-  })
-}
-
-async function spotifyAuth(): Promise<string | null> {
-  return new Promise((resolve) => {
-    chrome.runtime.sendMessage({ action: "spotifyAuth" }, (res) => {
-      if (res?.error) {
-        console.error("Spotify auth error:", res.error)
-        resolve(null)
-      } else {
-        resolve(res?.token ?? null)
-      }
-    })
-  })
-}
-
-async function searchSpotifyTrack(
-  token: string,
-  title: string,
-  artist: string
-): Promise<{ uri: string } | null> {
-  const query = encodeURIComponent(`track:${title} artist:${artist}`)
-  const res = await fetch(
-    `https://api.spotify.com/v1/search?q=${query}&type=track&limit=1`,
-    { headers: { Authorization: `Bearer ${token}` } }
-  )
-  if (!res.ok) return null
-  const data = await res.json()
-  const track = data.tracks?.items?.[0]
-  return track ? { uri: track.uri } : null
-}
-
-async function createPlaylist(
-  token: string,
-  name: string
-): Promise<{ id: string; url: string } | null> {
-  // Get user ID
-  const meRes = await fetch("https://api.spotify.com/v1/me", {
-    headers: { Authorization: `Bearer ${token}` },
-  })
-  if (!meRes.ok) return null
-  const me = await meRes.json()
-
-  const plRes = await fetch(
-    `https://api.spotify.com/v1/users/${me.id}/playlists`,
-    {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${token}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        name,
-        description: "Created by WaterMelon 🍉",
-        public: false,
-      }),
-    }
-  )
-  if (!plRes.ok) return null
-  const pl = await plRes.json()
-  return {
-    id: pl.id,
-    url: pl.external_urls?.spotify ?? `https://open.spotify.com/playlist/${pl.id}`,
-  }
-}
-
-async function addTracksToPlaylist(
-  token: string,
-  playlistId: string,
-  uris: string[]
-): Promise<boolean> {
-  const res = await fetch(
-    `https://api.spotify.com/v1/playlists/${playlistId}/tracks`,
-    {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${token}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({ uris }),
-    }
-  )
-  return res.ok
 }
 
 // --- Screens ---
@@ -322,10 +243,7 @@ function SuccessScreen({
           fullWidth
           icon={<SpotifyIcon />}
           onClick={() => {
-            if (!playlistUrl) return
-            chrome.tabs.create({ url: playlistUrl }, () => {
-              if (chrome.runtime.lastError) window.open(playlistUrl, "_blank")
-            })
+            if (playlistUrl) sendBg({ action: "openTab", url: playlistUrl })
           }}
         >
           Open in Spotify
@@ -347,7 +265,6 @@ export function App() {
   const [screen, setScreen] = useState<Screen>("idle")
   const [songs, setSongs] = useState<Song[]>([])
   const [videoTitle, setVideoTitle] = useState("")
-  const [token, setToken] = useState<string | null>(null)
   const [activeStep, setActiveStep] = useState(0)
   const [playlistUrl, setPlaylistUrl] = useState<string | null>(null)
   const [matchedCount, setMatchedCount] = useState(0)
@@ -355,14 +272,13 @@ export function App() {
   // On mount: check for existing token, then try to extract songs
   useEffect(() => {
     async function init() {
-      const existingToken = await getToken()
-      if (existingToken) setToken(existingToken)
+      const tokenRes = await sendBg({ action: "getToken" })
+      const existingToken = tokenRes?.token ?? null
 
       // Ask content script for songs
       const [tab] = await chrome.tabs.query({ active: true, currentWindow: true })
       if (!tab?.id || !tab.url?.includes("youtube.com/watch")) return
 
-      // Try sending message; if content script isn't loaded, inject and retry
       let res = await extractSongsFromTab(tab.id)
       if (!res) {
         await injectContentScript(tab.id)
@@ -388,17 +304,14 @@ export function App() {
   }, [])
 
   const handleLogin = useCallback(async () => {
-    const t = await spotifyAuth()
-    if (t) {
-      setToken(t)
-      if (songs.length > 0) {
-        setScreen("song-list")
-      }
+    const res = await sendBg({ action: "spotifyAuth" })
+    if (res?.error) return
+    if (res?.token && songs.length > 0) {
+      setScreen("song-list")
     }
   }, [songs.length])
 
   const handleSync = useCallback(async () => {
-    if (!token) return
     setScreen("syncing")
     setActiveStep(0)
 
@@ -406,38 +319,36 @@ export function App() {
     await new Promise((r) => setTimeout(r, 600))
     setActiveStep(1)
 
-    // Step 1: Match tracks on Spotify
-    const matched: Song[] = []
-    for (const song of songs) {
-      const result = await searchSpotifyTrack(token, song.title, song.artist)
-      matched.push({
-        ...song,
-        confidence: result ? "matched" : "uncertain",
-        spotifyUri: result?.uri,
-      })
+    // Background에서 전체 싱크 수행
+    const result = await sendBg({
+      action: "syncPlaylist",
+      songs: songs.map((s) => ({ title: s.title, artist: s.artist })),
+      videoTitle,
+    })
+
+    if (!result || result.error === 'Not authenticated') {
+      setScreen("login")
+      return
     }
-    setSongs(matched)
+
+    // 결과 반영
+    if (result.matched) {
+      setSongs(result.matched.map((s: any) => ({
+        title: s.title,
+        artist: s.artist,
+        confidence: s.confidence,
+        spotifyUri: s.spotifyUri,
+      })))
+    }
     setActiveStep(2)
 
-    // Step 2: Create playlist & add tracks
-    const uris = matched.filter((s) => s.spotifyUri).map((s) => s.spotifyUri!)
-    setMatchedCount(uris.length)
-
-    if (uris.length > 0) {
-      const playlistName = `🍉 ${videoTitle}`
-      const playlist = await createPlaylist(token, playlistName)
-      if (playlist) {
-        await addTracksToPlaylist(token, playlist.id, uris)
-        setPlaylistUrl(playlist.url)
-      }
-    }
+    setMatchedCount(result.matchedCount || 0)
+    setPlaylistUrl(result.playlistUrl || null)
 
     setActiveStep(3)
-
-    // Step 3: Done → transition to success
     await new Promise((r) => setTimeout(r, 800))
     setScreen("success")
-  }, [token, songs, videoTitle])
+  }, [songs, videoTitle])
 
   return (
     <div className="relative flex h-[580px] w-[380px] flex-col overflow-hidden rounded-2xl border border-wm-border bg-wm-dark shadow-2xl shadow-black/60">
