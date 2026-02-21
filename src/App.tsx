@@ -123,7 +123,10 @@ async function createPlaylist(
   )
   if (!plRes.ok) return null
   const pl = await plRes.json()
-  return { id: pl.id, url: pl.external_urls?.spotify }
+  return {
+    id: pl.id,
+    url: pl.external_urls?.spotify ?? `https://open.spotify.com/playlist/${pl.id}`,
+  }
 }
 
 async function addTracksToPlaylist(
@@ -319,7 +322,10 @@ function SuccessScreen({
           fullWidth
           icon={<SpotifyIcon />}
           onClick={() => {
-            if (playlistUrl) chrome.tabs.create({ url: playlistUrl })
+            if (!playlistUrl) return
+            chrome.tabs.create({ url: playlistUrl }, () => {
+              if (chrome.runtime.lastError) window.open(playlistUrl, "_blank")
+            })
           }}
         >
           Open in Spotify
