@@ -351,7 +351,7 @@ export function App() {
   }, [songs, videoTitle])
 
   return (
-    <div className="relative flex h-[580px] w-[380px] flex-col overflow-hidden rounded-2xl border border-wm-border bg-wm-dark shadow-2xl shadow-black/60">
+    <div className="relative flex h-[580px] w-[380px] flex-col overflow-hidden rounded-2xl bg-wm-dark">
       {/* Subtle gradient overlay */}
       <div className="pointer-events-none absolute inset-0 bg-gradient-to-b from-wm-red/[0.04] via-transparent to-wm-green/[0.04]" />
 
