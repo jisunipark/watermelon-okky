@@ -52,23 +52,29 @@ importScripts('../secrets.js');
   }
 
   async function authenticateSpotify() {
+    // 기존 stale 토큰 클리어
+    await chrome.storage.local.remove(['spotify_token', 'spotify_refresh_token', 'spotify_token_expiry']);
+
     const redirectUri = chrome.identity.getRedirectURL();
 
     const codeVerifier = generateRandomString(64);
     const hashed = await sha256(codeVerifier);
     const codeChallenge = base64urlEncode(hashed);
 
-    const authUrl = new URL(SPOTIFY_AUTH_URL);
-    authUrl.searchParams.set('client_id', SPOTIFY_CLIENT_ID);
-    authUrl.searchParams.set('response_type', 'code');
-    authUrl.searchParams.set('redirect_uri', redirectUri);
-    authUrl.searchParams.set('scope', SPOTIFY_SCOPES);
-    authUrl.searchParams.set('code_challenge_method', 'S256');
-    authUrl.searchParams.set('code_challenge', codeChallenge);
-    authUrl.searchParams.set('show_dialog', 'false');
+    // URLSearchParams는 공백을 +로 인코딩 → Spotify가 scope를 못 읽음
+    // 직접 %20으로 인코딩하여 URL 구성
+    const params = [
+      `client_id=${encodeURIComponent(SPOTIFY_CLIENT_ID)}`,
+      `response_type=code`,
+      `redirect_uri=${encodeURIComponent(redirectUri)}`,
+      `scope=${encodeURIComponent(SPOTIFY_SCOPES)}`,
+      `code_challenge_method=S256`,
+      `code_challenge=${encodeURIComponent(codeChallenge)}`,
+      `show_dialog=true`,
+    ].join('&');
 
     const responseUrl = await chrome.identity.launchWebAuthFlow({
-      url: authUrl.toString(),
+      url: `${SPOTIFY_AUTH_URL}?${params}`,
       interactive: true,
     });
 
@@ -136,18 +142,43 @@ importScripts('../secrets.js');
   // --- Spotify API (모든 호출을 background에서 수행) ---
 
   async function searchTrack(token, title, artist) {
-    const query = encodeURIComponent(`track:${title} artist:${artist}`);
-    const res = await fetch(
-      `${SPOTIFY_API}/search?q=${query}&type=track&limit=1`,
-      { headers: { Authorization: `Bearer ${token}` } }
-    );
-    if (!res.ok) {
-      console.error('[WaterMelon] Search failed:', res.status, await res.text());
-      return null;
+    // 괄호 안의 부제/번역 제거 (예: "뱅뱅뱅 (BANG BANG BANG)" → "뱅뱅뱅")
+    const cleanTitle = title.replace(/\s*[\(\[].+?[\)\]]\s*/g, '').trim() || title;
+
+    // 전략 1: 필드 필터 사용 (아티스트 있을 때만)
+    // 전략 2: 일반 검색 (제목 + 아티스트)
+    // 전략 3: 괄호 안 내용으로 검색 (영문 제목일 수 있음)
+    const queries = [];
+
+    if (artist) {
+      queries.push(`track:${cleanTitle} artist:${artist}`);
+      queries.push(`${cleanTitle} ${artist}`);
+    } else {
+      queries.push(cleanTitle);
+      // 괄호 안 내용이 있으면 그것도 시도 (영문 제목)
+      const paren = title.match(/[\(\[](.+?)[\)\]]/);
+      if (paren) queries.push(paren[1].trim());
     }
-    const data = await res.json();
-    const track = data.tracks?.items?.[0];
-    return track ? { uri: track.uri } : null;
+    queries.push(title); // 원본 제목 전체로도 시도
+
+    for (const q of queries) {
+      if (!q) continue;
+      const encoded = encodeURIComponent(q);
+      const res = await fetch(
+        `${SPOTIFY_API}/search?q=${encoded}&type=track&limit=1`,
+        { headers: { Authorization: `Bearer ${token}` } }
+      );
+      if (!res.ok) {
+        console.error('[WaterMelon] Search failed:', res.status, q);
+        continue;
+      }
+      const data = await res.json();
+      const track = data.tracks?.items?.[0];
+      if (track) return { uri: track.uri };
+    }
+
+    console.warn('[WaterMelon] No match found for:', title, artist);
+    return null;
   }
 
   async function createPlaylist(token, name) {
