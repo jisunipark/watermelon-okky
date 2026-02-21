@@ -9,15 +9,23 @@ YouTube 영상에서 곡 정보를 추출하여 Spotify 플레이리스트를 �
 - 코드에서는 `secrets.js`를 import하여 사용
 
 ## 기술 스택
-- 순수 JavaScript (빌드 스텝 없음)
+- React + TypeScript (Vite 빌드) — popup UI
+- Tailwind CSS v4 + Framer Motion — 스타일/애니메이션
+- 순수 JavaScript — content script, background service worker
 - Chrome Extension Manifest V3
 - Spotify Web API (Implicit Grant Flow)
 
 ## 파일 구조
+- `src/` — React 소스 (App.tsx, components/)
+- `popup/` — Vite 빌드 산출물 (gitignore 대상)
 - `content/content.js` — YouTube 페이지 곡 추출
-- `popup/` — 팝업 UI (HTML/CSS/JS)
 - `background/background.js` — Spotify OAuth, 메시지 라우팅
 - `secrets.js` — API 키 (gitignore 대상, 커밋 금지)
+
+## 빌드
+- `npm install` — 의존성 설치
+- `npm run build` — popup/ 폴더에 빌드 산출물 생성
+- `npm run dev` — 개발 서버 (HMR)
 
 ## 커밋 규칙
 - 변경점마다 커밋 수행
