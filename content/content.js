@@ -3,29 +3,23 @@
 (() => {
   'use strict';
 
-  // 타임스탬프 정규식 패턴들
+  // 타임스탬프 정규식: 00:00, 0:00, 1:23:45 + 뒤따르는 텍스트
   const TIMESTAMP_RE =
-    /(?:\[?\s*)?(\d{1,2}:)?(\d{1,2}):(\d{2})(?:\s*\]?\s*[-–—.]?\s*)(.+)/;
+    /(?:\[?\s*)?(\d{1,2}:)?(\d{1,2}):(\d{2})(?:\s*\]?\s*[-–—.)]*\s*)(.+)/;
 
-  // "Artist - Title" 또는 "Title - Artist" 분리
+  // "Artist - Title" 분리
   const ARTIST_TITLE_RE = /^(.+?)\s*[-–—]\s*(.+)$/;
 
-  /**
-   * 타임스탬프 문자열을 초 단위로 변환
-   */
   function parseTimestamp(h, m, s) {
     return (parseInt(h || '0', 10) * 3600) +
            (parseInt(m, 10) * 60) +
            parseInt(s, 10);
   }
 
-  /**
-   * 곡명 텍스트를 artist/title로 분리
-   */
   function splitArtistTitle(raw) {
     const cleaned = raw
-      .replace(/^\d+\.\s*/, '')       // 번호 제거 (1. ...)
-      .replace(/\s*\(?(ft\.?|feat\.?)\s*.+?\)?$/i, '') // feat 제거
+      .replace(/^\d+\.\s*/, '')
+      .replace(/\s*\(?(ft\.?|feat\.?)\s*.+?\)?$/i, '')
       .trim();
 
     const match = cleaned.match(ARTIST_TITLE_RE);
@@ -36,22 +30,10 @@
   }
 
   /**
-   * 영상 설명란에서 타임스탬프 패턴 추출
+   * 텍스트 블록에서 타임스탬프 패턴 라인을 파싱
    */
-  function extractFromDescription() {
+  function parseLinesForSongs(text, source) {
     const songs = [];
-
-    // 설명란 텍스트 가져오기
-    const descEl =
-      document.querySelector('#description-inner ytd-text-inline-expander #attributed-snippet-text') ||
-      document.querySelector('#description-inner ytd-text-inline-expander') ||
-      document.querySelector('#description ytd-text-inline-expander') ||
-      document.querySelector('#description .content') ||
-      document.querySelector('#description');
-
-    if (!descEl) return songs;
-
-    const text = descEl.innerText || descEl.textContent || '';
     const lines = text.split('\n');
 
     for (const line of lines) {
@@ -71,7 +53,7 @@
           artist,
           timestamp,
           timestampStr: (hours ? `${hours}` : '') + `${minutes}:${seconds}`,
-          source: 'description'
+          source
         });
       }
     }
@@ -80,29 +62,99 @@
   }
 
   /**
-   * 챕터 타임라인 DOM에서 곡 정보 추출
+   * 1) 영상 설명란 (더보기)
+   * YouTube는 설명란 텍스트를 여러 셀렉터에 나눠 렌더링함
+   */
+  function extractFromDescription() {
+    // 여러 가능한 셀렉터 시도
+    const selectors = [
+      'ytd-watch-metadata #description-inner',
+      'ytd-watch-metadata #description',
+      '#meta #description',
+      'ytd-text-inline-expander #attributed-snippet-text',
+      'ytd-text-inline-expander .content',
+      'ytd-text-inline-expander',
+      '#description.ytd-watch-metadata',
+      '#description',
+    ];
+
+    for (const sel of selectors) {
+      const el = document.querySelector(sel);
+      if (!el) continue;
+
+      const text = el.innerText || el.textContent || '';
+      if (text.trim().length < 5) continue;
+
+      const songs = parseLinesForSongs(text, 'description');
+      if (songs.length > 0) return songs;
+    }
+
+    // 최후 수단: structured-description 내 모든 텍스트
+    const structured = document.querySelector('ytd-structured-description-content-renderer');
+    if (structured) {
+      const text = structured.innerText || structured.textContent || '';
+      const songs = parseLinesForSongs(text, 'description');
+      if (songs.length > 0) return songs;
+    }
+
+    return [];
+  }
+
+  /**
+   * 2) 고정된 댓글
+   */
+  function extractFromPinnedComment() {
+    // 고정 댓글은 "pinned-comment-badge" 또는 "pinned by" 라벨이 있음
+    const commentThreads = document.querySelectorAll('ytd-comment-thread-renderer');
+
+    for (const thread of commentThreads) {
+      const pinnedBadge = thread.querySelector(
+        '#pinned-comment-badge, ' +
+        '#author-comment-badge, ' +
+        '.ytd-pinned-comment-badge-renderer'
+      );
+      if (!pinnedBadge) continue;
+
+      const contentEl = thread.querySelector(
+        '#content-text, ' +
+        'yt-attributed-string#content-text, ' +
+        'yt-formatted-string#content-text'
+      );
+      if (!contentEl) continue;
+
+      const text = contentEl.innerText || contentEl.textContent || '';
+      const songs = parseLinesForSongs(text, 'pinned_comment');
+      if (songs.length > 0) return songs;
+    }
+
+    return [];
+  }
+
+  /**
+   * 3) 챕터 타임라인 (영상 내 챕터 마커)
    */
   function extractFromChapters() {
     const songs = [];
 
+    // 챕터 패널의 각 항목
     const chapterEls = document.querySelectorAll(
-      'ytd-macro-markers-list-item-renderer, ' +
-      'ytd-chapter-renderer'
+      'ytd-macro-markers-list-item-renderer'
     );
 
     for (const el of chapterEls) {
       const titleEl = el.querySelector(
-        '#details h4, #details .macro-markers, .chapter-title'
+        'h4, #details h4, .macro-markers-list-item-title'
       );
       const timeEl = el.querySelector(
-        '#details #time, #time, .timestamp'
+        '#time, .timestamp, #details #time'
       );
 
       if (!titleEl) continue;
 
       const rawTitle = (titleEl.textContent || '').trim();
-      const timeText = timeEl ? (timeEl.textContent || '').trim() : '';
+      if (!rawTitle) continue;
 
+      const timeText = timeEl ? (timeEl.textContent || '').trim() : '';
       const { artist, title } = splitArtistTitle(rawTitle);
 
       if (title) {
@@ -116,11 +168,19 @@
       }
     }
 
+    // 프로그레스바 위 챕터 (hover 시 보이는 것들)도 시도
+    if (songs.length === 0) {
+      const chapterTitles = document.querySelectorAll(
+        '.ytp-chapter-title-content'
+      );
+      // 현재 재생 중인 챕터 하나만 보이므로 리스트로는 부적합
+    }
+
     return songs;
   }
 
   /**
-   * 플레이리스트 페이지의 영상 제목에서 곡 정보 추출
+   * 4) 플레이리스트 영상 제목
    */
   function extractFromPlaylist() {
     const songs = [];
@@ -153,20 +213,15 @@
     return songs;
   }
 
-  /**
-   * 영상 제목 가져오기
-   */
   function getVideoTitle() {
     const el = document.querySelector(
       'h1.ytd-watch-metadata yt-formatted-string, ' +
-      'h1.ytd-video-primary-info-renderer'
+      'h1.ytd-video-primary-info-renderer, ' +
+      '#title h1 yt-formatted-string'
     );
     return el ? (el.textContent || '').trim() : document.title;
   }
 
-  /**
-   * 중복 제거 (title 기준)
-   */
   function dedup(songs) {
     const seen = new Set();
     return songs.filter(s => {
@@ -178,16 +233,24 @@
   }
 
   /**
-   * 전체 추출 실행
+   * 전체 추출 — 설명란 > 고정 댓글 > 챕터 > 플레이리스트 순
    */
   function extractSongs() {
     const descSongs = extractFromDescription();
+    const pinnedSongs = extractFromPinnedComment();
     const chapterSongs = extractFromChapters();
     const playlistSongs = extractFromPlaylist();
 
-    // 설명란 > 챕터 > 플레이리스트 우선순위
-    let allSongs = [...descSongs, ...chapterSongs, ...playlistSongs];
+    let allSongs = [...descSongs, ...pinnedSongs, ...chapterSongs, ...playlistSongs];
     allSongs = dedup(allSongs);
+
+    console.log('[WaterMelon] Extraction results:', {
+      description: descSongs.length,
+      pinnedComment: pinnedSongs.length,
+      chapters: chapterSongs.length,
+      playlist: playlistSongs.length,
+      total: allSongs.length,
+    });
 
     return {
       songs: allSongs,
@@ -196,12 +259,12 @@
     };
   }
 
-  // 메시지 리스너 — popup에서 요청 시 곡 정보 반환
+  // 메시지 리스너
   chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     if (msg.action === 'extractSongs') {
       const result = extractSongs();
       sendResponse(result);
     }
-    return true; // 비동기 응답 허용
+    return true;
   });
 })();
