@@ -233,13 +233,18 @@
   }
 
   /**
-   * 전체 추출 — 설명란 > 고정 댓글 > 챕터 > 플레이리스트 순
+   * 전체 추출 — 우선순위 기반: 상위 소스에서 곡이 잡히면 하위는 건너뜀
+   * 설명란 > 고정 댓글 > 챕터 > 플레이리스트(전용 페이지만)
    */
   function extractSongs() {
     const descSongs = extractFromDescription();
     const pinnedSongs = extractFromPinnedComment();
     const chapterSongs = extractFromChapters();
-    const playlistSongs = extractFromPlaylist();
+
+    // 설명란/고정댓글/챕터에서 곡이 잡혔으면 사이드바 플레이리스트는 스킵
+    // (라디오 믹스, 자동재생 목록 등의 노이즈 방지)
+    const hasSongsFromPrimary = descSongs.length + pinnedSongs.length + chapterSongs.length > 0;
+    const playlistSongs = hasSongsFromPrimary ? [] : extractFromPlaylist();
 
     let allSongs = [...descSongs, ...pinnedSongs, ...chapterSongs, ...playlistSongs];
     allSongs = dedup(allSongs);
