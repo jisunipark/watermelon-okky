@@ -33,6 +33,29 @@ const transition = {
   transition: { duration: 0.3 },
 }
 
+// --- Chrome helpers ---
+
+async function extractSongsFromTab(
+  tabId: number
+): Promise<{ songs: { title: string; artist: string }[]; videoTitle: string } | null> {
+  return new Promise((resolve) => {
+    chrome.tabs.sendMessage(tabId, { action: "extractSongs" }, (res) => {
+      if (chrome.runtime.lastError) {
+        resolve(null) // content script not injected
+      } else {
+        resolve(res)
+      }
+    })
+  })
+}
+
+async function injectContentScript(tabId: number): Promise<void> {
+  await chrome.scripting.executeScript({
+    target: { tabId },
+    files: ["content/content.js"],
+  })
+}
+
 // --- Spotify API helpers ---
 
 async function getToken(): Promise<string | null> {
@@ -333,27 +356,27 @@ export function App() {
       const [tab] = await chrome.tabs.query({ active: true, currentWindow: true })
       if (!tab?.id || !tab.url?.includes("youtube.com/watch")) return
 
-      chrome.tabs.sendMessage(tab.id, { action: "extractSongs" }, (res) => {
-        if (chrome.runtime.lastError) {
-          console.warn("[WaterMelon]", chrome.runtime.lastError.message)
-          return
-        }
-        if (!res?.songs?.length) return
+      // Try sending message; if content script isn't loaded, inject and retry
+      let res = await extractSongsFromTab(tab.id)
+      if (!res) {
+        await injectContentScript(tab.id)
+        res = await extractSongsFromTab(tab.id)
+      }
+      if (!res?.songs?.length) return
 
-        const extracted: Song[] = res.songs.map((s: { title: string; artist: string }) => ({
-          title: s.title,
-          artist: s.artist,
-          confidence: "matched" as const,
-        }))
-        setSongs(extracted)
-        setVideoTitle(res.videoTitle || "YouTube Playlist")
+      const extracted: Song[] = res.songs.map((s) => ({
+        title: s.title,
+        artist: s.artist,
+        confidence: "matched" as const,
+      }))
+      setSongs(extracted)
+      setVideoTitle(res.videoTitle || "YouTube Playlist")
 
-        if (existingToken) {
-          setScreen("song-list")
-        } else {
-          setScreen("login")
-        }
-      })
+      if (existingToken) {
+        setScreen("song-list")
+      } else {
+        setScreen("login")
+      }
     }
     init().catch((err) => console.error("[WaterMelon] Init error:", err))
   }, [])
