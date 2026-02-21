@@ -151,16 +151,7 @@ importScripts('../secrets.js');
   }
 
   async function createPlaylist(token, name) {
-    const meRes = await fetch(`${SPOTIFY_API}/me`, {
-      headers: { Authorization: `Bearer ${token}` },
-    });
-    if (!meRes.ok) {
-      console.error('[WaterMelon] /me failed:', meRes.status, await meRes.text());
-      return null;
-    }
-    const me = await meRes.json();
-
-    const plRes = await fetch(`${SPOTIFY_API}/users/${me.id}/playlists`, {
+    const plRes = await fetch(`${SPOTIFY_API}/me/playlists`, {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${token}`,
@@ -169,7 +160,12 @@ importScripts('../secrets.js');
       body: JSON.stringify({ name, description: 'Created by WaterMelon', public: false }),
     });
     if (!plRes.ok) {
-      console.error('[WaterMelon] Create playlist failed:', plRes.status, await plRes.text());
+      const errText = await plRes.text();
+      console.error('[WaterMelon] Create playlist failed:', plRes.status, errText);
+      if (plRes.status === 401 || plRes.status === 403) {
+        // 토큰이 잘못된 scope이거나 만료됨 → 클리어
+        await chrome.storage.local.remove(['spotify_token', 'spotify_refresh_token', 'spotify_token_expiry']);
+      }
       return null;
     }
     const pl = await plRes.json();
@@ -198,8 +194,8 @@ importScripts('../secrets.js');
    * 전체 싱크 플로우를 background에서 실행
    * popup은 진행 상황을 메시지로 받음
    */
-  async function syncPlaylist(songs, videoTitle, senderTabId) {
-    const token = await getStoredToken();
+  async function syncPlaylist(songs, videoTitle) {
+    let token = await getStoredToken();
     if (!token) return { error: 'Not authenticated' };
 
     // Step 1: 트랙 매칭
@@ -219,7 +215,14 @@ importScripts('../secrets.js');
     }
 
     // Step 2: 플레이리스트 생성 + 트랙 추가
-    const playlist = await createPlaylist(token, `🍉 ${videoTitle}`);
+    let playlist = await createPlaylist(token, `🍉 ${videoTitle}`);
+
+    // 403/401이면 토큰이 stale → 재인증 후 한 번 재시도
+    if (!playlist) {
+      token = await getStoredToken();
+      if (!token) return { matched, matchedCount: uris.length, playlistUrl: null, error: 'Re-auth needed' };
+      playlist = await createPlaylist(token, `🍉 ${videoTitle}`);
+    }
     if (!playlist) return { matched, matchedCount: uris.length, playlistUrl: null, error: 'Failed to create playlist' };
 
     const added = await addTracks(token, playlist.id, uris);
@@ -255,6 +258,12 @@ importScripts('../secrets.js');
           console.error('[WaterMelon] Sync error:', err);
           sendResponse({ error: err.message });
         });
+      return true;
+    }
+
+    if (msg.action === 'clearAuth') {
+      chrome.storage.local.remove(['spotify_token', 'spotify_refresh_token', 'spotify_token_expiry'])
+        .then(() => sendResponse({ ok: true }));
       return true;
     }
 
