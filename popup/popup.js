@@ -4,8 +4,7 @@
   'use strict';
 
   // ── Spotify 설정 ──
-  // TODO: Spotify Developer Dashboard에서 발급받은 Client ID로 교체
-  const SPOTIFY_CLIENT_ID = 'YOUR_SPOTIFY_CLIENT_ID';
+  // SPOTIFY_CLIENT_ID는 secrets.js에서 전역으로 로드됨
   const SPOTIFY_REDIRECT_URI = chrome.identity.getRedirectURL();
   const SPOTIFY_SCOPES = 'playlist-modify-public playlist-modify-private';
   const SPOTIFY_API = 'https://api.spotify.com/v1';

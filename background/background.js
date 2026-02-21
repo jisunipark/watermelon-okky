@@ -1,10 +1,11 @@
 // WaterMelon Background Service Worker — OAuth & 메시지 라우팅
 
+importScripts('../secrets.js');
+
 (() => {
   'use strict';
 
-  // Spotify OAuth 설정
-  const SPOTIFY_CLIENT_ID = 'YOUR_SPOTIFY_CLIENT_ID';
+  // SPOTIFY_CLIENT_ID는 secrets.js에서 전역으로 로드됨
   const SPOTIFY_AUTH_URL = 'https://accounts.spotify.com/authorize';
   const SPOTIFY_SCOPES = 'playlist-modify-public playlist-modify-private';
 
