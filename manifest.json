@@ -9,6 +9,10 @@
     "storage",
     "scripting"
   ],
+  "host_permissions": [
+    "https://api.spotify.com/*",
+    "https://accounts.spotify.com/*"
+  ],
   "action": {
     "default_popup": "popup/index.html",
     "default_icon": {
